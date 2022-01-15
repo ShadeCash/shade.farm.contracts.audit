@@ -43,6 +43,7 @@ contract ShadeStaker is ReentrancyGuard, Ownable {
 	IWETH public immutable WETH;
     address[] public rewardTokens;
 	IPenaltyReceiver public penaltyReceiver;
+	bool public penaltyReceiverIsContract;
     mapping(address => Reward) public rewardData;
 
     // Duration that rewards are streamed over
@@ -100,9 +101,10 @@ contract ShadeStaker is ReentrancyGuard, Ownable {
     }
 
     // Set PenaltyReceiver address for send penalty
-    function setPenaltyReceiver(IPenaltyReceiver newPenaltyReceiver) public onlyOwner {
+    function setPenaltyReceiver(IPenaltyReceiver newPenaltyReceiver, bool isContract) public onlyOwner {
         penaltyReceiver = newPenaltyReceiver;
-		emit SetPenaltyReceiver(address(newPenaltyReceiver));
+		penaltyReceiverIsContract = isContract;
+		emit SetPenaltyReceiver(address(newPenaltyReceiver), isContract);
     }
 
     // Add lock staker for staking claimed rewards
@@ -507,10 +509,14 @@ contract ShadeStaker is ReentrancyGuard, Ownable {
     // Transfer tokens to user and penalty to StakerX 
     function _sendTokensAndPenalty(uint256 tokensAmount, uint256 penaltyAmount) internal {
         if (penaltyAmount > 0 && address(penaltyReceiver) != address(0)) {
-            stakingToken.approve(address(penaltyReceiver), penaltyAmount);
-			penaltyReceiver.notifyReward(penaltyAmount);
-			stakingToken.safeTransfer(msg.sender, tokensAmount);     
-			emit PenaltyPaid(msg.sender, penaltyAmount);       
+			if (penaltyReceiverIsContract) {
+				stakingToken.approve(address(penaltyReceiver), penaltyAmount);
+				penaltyReceiver.notifyReward(penaltyAmount);				    
+			} else {
+				stakingToken.safeTransfer(address(penaltyReceiver), penaltyAmount);
+			}             
+			emit PenaltyPaid(msg.sender, penaltyAmount);   
+			stakingToken.safeTransfer(msg.sender, tokensAmount);    
         } else {
             stakingToken.safeTransfer(msg.sender, tokensAmount + penaltyAmount);
         }
@@ -543,6 +549,6 @@ contract ShadeStaker is ReentrancyGuard, Ownable {
 	event FTMReceived(address indexed distributor, uint256 amount);
     event AddRewardToken(address rewardsToken, address distributor);
     event SetRewardDistributor(address rewardsToken, address distributor, bool state);
-    event SetPenaltyReceiver(address penaltyReceiver);
+    event SetPenaltyReceiver(address penaltyReceiver, bool isContract);
     event SetLockStaker(address lockStaker); 
 }
