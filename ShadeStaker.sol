@@ -320,9 +320,10 @@ contract ShadeStaker is ReentrancyGuard, Ownable {
 
         Balances storage bal = balances[msg.sender];        
         require(amount <= bal.total - bal.locked, "Not enough unlocked tokens to withdraw"); 
-        
-        totalSupply -= amount;
-        bal.total -= amount;        
+                
+        bal.total -= amount;    
+
+		_sendTokensAndPenalty(amount, 0);
                 
         emit Withdrawn(msg.sender, amount);
     }
@@ -508,7 +509,7 @@ contract ShadeStaker is ReentrancyGuard, Ownable {
 
     // Transfer tokens to user and penalty to StakerX 
     function _sendTokensAndPenalty(uint256 tokensAmount, uint256 penaltyAmount) internal {
-        if (penaltyAmount > 0 && address(penaltyReceiver) != address(0)) {
+        if (penaltyAmount != 0 && address(penaltyReceiver) != address(0)) {
 			if (penaltyReceiverIsContract) {
 				stakingToken.approve(address(penaltyReceiver), penaltyAmount);
 				penaltyReceiver.notifyReward(penaltyAmount);				    
