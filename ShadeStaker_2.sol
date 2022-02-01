@@ -459,13 +459,15 @@ contract ShadeStaker is ReentrancyGuard, Ownable {
         uint256 locksLength = locks.length;
         // return if user has no locks
         if (locksLength == 0) return;
-                
-        if (locks[locksLength-1].unlockTime > block.timestamp) {
-            // searching for expired locks from beginning (startIndex) till first not expired
-			while (locks[startIndex[account]].unlockTime <= block.timestamp) {
-				startIndex[account] ++;
-			}            
-        } else {
+		
+        // searching for expired locks from stratIndex untill first locked found or end reached        
+        while (locks[startIndex[account]].unlockTime <= block.timestamp 
+			&& startIndex[account] < locksLength) {
+			startIndex[account] ++;
+		} 
+		
+		// if end reached it means no lock found and we can reset startedIndex and clear all locks array
+		if (startIndex[account] >= locksLength) {
             startIndex[account] = 0;
             delete userLocks[account];
         }
