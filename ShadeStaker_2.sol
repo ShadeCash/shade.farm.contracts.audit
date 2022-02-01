@@ -25,10 +25,6 @@ contract ShadeStaker is ReentrancyGuard, Ownable {
         uint256 lastUpdateTime;
         uint256 rewardPerTokenStored;
     }
-    struct Balances {
-        uint256 total;
-        uint256 locked;       
-    }
     struct LockedBalance {
         uint256 amount;
         uint256 unlockTime;
