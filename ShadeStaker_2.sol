@@ -72,8 +72,9 @@ contract ShadeStaker is ReentrancyGuard, Ownable {
     uint256 public totalSupply;
     
     // Private mappings for balance data
-    mapping(address => Balances) public balances;
+    mapping(address => uint256) public balances;
     mapping(address => LockedBalance[]) public userLocks;
+	mapping(address => uint256) public startIndex;
     // id's for users locks (unlock by id)
     uint256 public lockIds;
         
@@ -134,8 +135,8 @@ contract ShadeStaker is ReentrancyGuard, Ownable {
 
     //
     function earned(address user, address rewardsToken) internal view returns (uint256) {
-        if (balances[user].total == 0) return 0;
-        return balances[user].total * (rewardPerToken(rewardsToken) - userRewardPerTokenPaid[user][rewardsToken]) / 1e18 + rewards[user][rewardsToken];
+        if (balances[user] == 0) return 0;
+        return balances[user] * (rewardPerToken(rewardsToken) - userRewardPerTokenPaid[user][rewardsToken]) / 1e18 + rewards[user][rewardsToken];
     }
 
     //
@@ -159,63 +160,54 @@ contract ShadeStaker is ReentrancyGuard, Ownable {
         return rewardsAvailable;
     }
 
+	function lockedBalance(address account) public view returns (uint256 amount) {
+		LockedBalance[] memory locks = userLocks[account];
+		for (uint i = startIndex[account]; i < locks.length; i++) {
+            if (locks[i].unlockTime > block.timestamp) {
+                amount += locks[i].amount;
+			}  			         
+        } 		
+	}
+
     // Final balance received and penalty balance paid by user upon calling withdrawAll
-    function withdrawableBalance(address user) public view returns (uint256 amount, uint256 penaltyAmount) {
-        LockedBalance[] memory locks = userLocks[user];
-        Balances memory bal = balances[user];
-        // how much user has locks
+    function withdrawableBalance(address account) public view returns (uint256 amount, uint256 penaltyAmount) {
+        LockedBalance[] memory locks = userLocks[account];
+        uint256 balance = balances[account];
+        // how much account has locks
         uint256 length = locks.length;
         if (length == 0) {
-            // if no locks unlocked balance, all
-            amount = bal.total;
+            // if no locks unlocked balance is total
+            amount = balance;
         } else {
             if (locks[length-1].unlockTime > block.timestamp) {
-                uint256 underPenaltyAmount;
-				// AUDIT Finding Id: 4
-				// length can't be more than lockDurationMultiplier (13) + 1
-                for (uint i = 0; i < length; i++) {
-					// AUDIT Finding Id: 7
-                    if (locks[i].unlockTime > block.timestamp) {
-                        // lock not expired then calculate penalty (50%) and rest
-                        // AUDIT Finding Id: 6
-						// if we divide not multiple by two amount (3, 23, 123123, 46234672364783...) by 2 then we will have presision error
-						// that's why we subtrat penalty from amount to get leftover
-						// so every such amount withdraw we give user 1 extra wei instead send it to penalty 
-						// but we not lose this 1 wei
-
-						uint256 penalty = locks[i].amount / 2;
-                        penaltyAmount += penalty;
-                        amount += locks[i].amount - penalty; 
-                        // also we calculate under penalty to substrat later from total
-                        underPenaltyAmount += locks[i].amount;
-                    } else {
-                        // lock expired
-                        amount += locks[i].amount; 
-                    }               
-                }
-                // final amount to receive after penalty pay
-                amount = bal.total - underPenaltyAmount + amount; 
+				uint256 locked = lockedBalance(account);
+				uint256 unlocked = balance - locked;
+				penaltyAmount = locked / 2;
+				// total amount to withdraw
+				amount = unlocked + (locked - penaltyAmount);
             } else {
-                // if last lock expired than no need to check all locks since they already unlocked, so same all
-                amount = bal.total; 
+                // if last lock expired than no need to check all locks since they already unlocked
+                amount = balance; 
             }
         }   
-        return (amount, penaltyAmount);
+        //return (amount, penaltyAmount);
     }
 
     // Contract Data method for decrease number of request to contract from dApp UI
     function contractData() public view returns (
-        uint256,            // totalSupply
-        address[] memory,   // rewardTokens
-        uint256[] memory,   // rewardPerToken        
-        uint256[] memory,   // claimRewardForDuration        
-        uint256[] memory,   // rewardBalances   
-        uint256,            // rewardsDuration   
-        uint256             // lockDuration   
+        uint256 _totalStaked,            // totalSupply
+        address[] memory _rewardTokens,   // rewardTokens
+        uint256[] memory _rewardPerToken,   // rewardPerToken        
+        uint256[] memory _claimRewardForDuration,   // claimRewardForDuration        
+        uint256[] memory _rewardBalances,   // rewardBalances   
+        uint256 _rewardsDuration,            // rewardsDuration   
+        uint256 _lockDuration            // lockDuration   
         ) {
-            uint256[] memory _rewardPerToken = new uint256[](rewardTokens.length);
-            uint256[] memory _claimRewardForDuration = new uint256[](rewardTokens.length);
-            uint256[] memory _rewardBalances = new uint256[](rewardTokens.length);
+            _totalStaked = totalSupply;
+			_rewardTokens = rewardTokens;
+			_rewardPerToken = new uint256[](rewardTokens.length);
+            _claimRewardForDuration = new uint256[](rewardTokens.length);
+            _rewardBalances = new uint256[](rewardTokens.length);
 
 			// AUDIT Finding Id: 4
 			// rewardTokens.length limited by maxRewardsTokens            
@@ -224,77 +216,43 @@ contract ShadeStaker is ReentrancyGuard, Ownable {
                _rewardPerToken[i] = rewardPerToken(rewardTokens[i]);
                _rewardBalances[i] = IERC20(rewardTokens[i]).balanceOf(address(this));
             }
-            
-        return (
-            totalSupply,
-            rewardTokens,
-            _rewardPerToken,  
-            _claimRewardForDuration,
-            _rewardBalances,
-            rewardsDuration,
-            lockDuration              
-        );
+
+			_rewardsDuration = rewardsDuration;
+			_lockDuration = lockDuration;
     }
 
     // User Data method for decrease number of request to contract from dApp UI
     function userData(address account) public view returns (
-        Balances memory,            // Balances
-        LockedBalance[] memory,     // Locks
-        RewardData[] memory,        // claimableRewards
-        uint256,                     // allowance of staking token        
-        uint256                     // balance of staking token        
+        uint256 _staked,  // Staked balance
+        uint256 _locked,  // Locked balance
+        LockedBalance[] memory _userLocks,     // Locks
+        RewardData[] memory _claimableRewards,        // claimableRewards
+        uint256 _allowance,                     // allowance of staking token        
+        uint256 _balance                    // balance of staking token        
         ) {
 			// AUDIT Finding Id: 11 	
             // Balances and Locks
 			// since some of lock could be expired at moment of call we need to recalculate actual locked balance
 			// we can do it also on UI by adding all locks amounts together, but nicer to return it directly from contract
-            Balances memory _balances = Balances({
-                total: balances[account].total,
-                locked: 0
-            });            
-            LockedBalance[] memory locks = userLocks[account];     
-			// next we want to exclude empty/expired locks from list and return only acual locks
-			// of course we can do it also on UI by filtering empty/expired 
-			// but since we know that possible number of user locks can't be more than 13 (14 elements with gap)
-			// such operation not so hard, so why not do it right here
-			
-			// first we determine number of not expired/empty locks
-            uint256 locksCount;  
+            _staked = balances[account];
+
+            LockedBalance[] memory locks = userLocks[account];     			
 			// AUDIT Finding Id: 4
-			// length can't be more than lockDurationMultiplier (13) + 1
-            for (uint i = 0; i < locks.length; i++) {
+			// length can't be more than lockDurationMultiplier (14)            
+			_userLocks = new LockedBalance[](locks.length - startIndex[account]);
+			uint256 idx;
+			for (uint i = startIndex[account]; i < locks.length; i++) {
 				// AUDIT Finding Id: 7
                 if (locks[i].unlockTime > block.timestamp) {
-                    locksCount ++;   
-					_balances.locked += locks[i].amount;                 
+                   	_userLocks[idx] = locks[i]; 
+					_locked += locks[i].amount;                    
+                    idx ++;             
                 }            
             }
-			// then we creating new array with locksCount lenght 
-            LockedBalance[] memory _userLocks = new LockedBalance[](locksCount);
-            if (locksCount != 0) {
-                uint256 idx;
-				// and fill this array with actual locks 
-				// AUDIT Finding Id: 4
-				// length can't be more than lockDurationMultiplier (13) + 1 
-				for (uint i = 0; i < locks.length; i++) {
-                    if (locks[i].unlockTime > block.timestamp) {
-                        _userLocks[idx] = locks[i];                        
-                        idx ++;
-                    }            
-                }
-            } 
-            
-            RewardData[] memory _claimableRewards = claimableRewards(account);
-
-            uint256 _allowance = stakingToken.allowance(account, address(this));
-            uint256 _balance = stakingToken.balanceOf(account);
-        return (
-            _balances,
-            _userLocks,
-            _claimableRewards,
-            _allowance,
-            _balance           
-        );
+			            
+            _claimableRewards = claimableRewards(account);
+            _allowance = stakingToken.allowance(account, address(this));
+            _balance = stakingToken.balanceOf(account);        
     }
 
     // -------------------------------- MUTATIVE FUNCTIONS -----------------------------------
@@ -316,17 +274,14 @@ contract ShadeStaker is ReentrancyGuard, Ownable {
 
         require(amount != 0, "Can't stake 0");
 
-        Balances storage bal = balances[account];
-        bal.total = bal.total + amount;
+        balances[account] += amount;
         if (lock) {            
-            bal.locked = bal.locked + amount;
-			// AUDIT Finding Id: 6
+            // AUDIT Finding Id: 6
 			// AUDIT Finding Id: 10 
 			// rounding here used for getting time multiple to one reward period (7 days).
 			// block.timestamp / rewardsDuration * rewardsDuration gives us number seconds of full weeks since 'begining of time'.
 			// it means than every lock created in this period will be added to existing (latest one).
-			// so user can have maximum 13 locks because when last creted first already expired and handeled in _updateUserLocks method.
-			// also will be one gap at the beginning of array that will be removed if number of locks will up to 14 (grater than lockDurationMultiplier).
+			// so user can have maximum 14 locks because when last creted first will expired and handeled in _updateUserLocks method.
 			
 			// contract designed to lock for 13 weeks (3 month) with 1 week (7 days) rewards distribution ONLY.
 			
@@ -382,11 +337,10 @@ contract ShadeStaker is ReentrancyGuard, Ownable {
         _updateUserLocks(msg.sender);
         _updateReward(msg.sender);
         _claimReward(msg.sender);       
-
-        Balances storage bal = balances[msg.sender];        
-        require(amount <= bal.total - bal.locked, "Not enough unlocked tokens to withdraw"); 
+     
+        require(amount <= balances[msg.sender] - lockedBalance(msg.sender), "Not enough unlocked tokens to withdraw"); 
                 
-        bal.total -= amount;    
+        balances[msg.sender] -= amount;    
 		// AUDIT Finding Id: 1
 		// it was my mechanical mistake and I fixed it as soon noticed it on testing
 		_sendTokensAndPenalty(amount, 0);
@@ -401,27 +355,22 @@ contract ShadeStaker is ReentrancyGuard, Ownable {
         _updateReward(msg.sender);
         _claimReward(msg.sender);
         
-        Balances storage bal = balances[msg.sender];
         // determine available tokens amount
-        uint256 amount = bal.locked;
+        uint256 amount = lockedBalance(msg.sender);
         require(amount != 0, "Can't withdraw 0");       
         
-        bal.total -= amount;
-        bal.locked = 0;
-
+        balances[msg.sender] -= amount;
+       
         delete userLocks[msg.sender];
+		startIndex[msg.sender] = 0;
         
 		// AUDIT Finding Id: 6
 		// if we divide not multiple by two amount (3, 23, 123123, 46234672364783...) by 2 then we will have presision error
-		// 23 / 2 = 11
-		// 1 / 2 = 0
-        uint256 penalty = amount / 2;
-        // that's why we subtrat penalty from amount to get leftover
-		// 23 - 11 = 12
-		// 1 - 0 = 1
+		// that's why we subtrat penalty from amount to get leftover
 		// so every such amount withdraw we give user 1 extra wei instead send it to penalty 
 		// but we not lose this 1 wei
-		amount -= penalty; 
+		uint256 penalty = amount / 2;
+        amount -= penalty; 
 
         _sendTokensAndPenalty(amount, penalty);
 
@@ -435,17 +384,13 @@ contract ShadeStaker is ReentrancyGuard, Ownable {
         _updateUserLocks(msg.sender); 
         _updateReward(msg.sender);
         _claimReward(msg.sender);
-        
-        Balances storage bal = balances[msg.sender];
-        require(bal.locked != 0, "Can't withdraw 0");       
+         
+        LockedBalance[] storage locks = userLocks[msg.sender];         
+        uint256 amount;     
 
-        LockedBalance[] storage locks = userLocks[msg.sender]; 
-        
-        uint256 amount;
-        
 		// AUDIT Finding Id: 4
-		// length can't be more than lockDurationMultiplier (13) + 1
-        for (uint i = 0; i < locks.length; i++) {
+		// length can't be more than lockDurationMultiplier (14)
+        for (uint i = startIndex[msg.sender]; i < locks.length; i++) {
             if (locks[i].id == id) {
                 amount = locks[i].amount;
 				delete locks[i];
@@ -453,24 +398,16 @@ contract ShadeStaker is ReentrancyGuard, Ownable {
             } 			         
         } 
 
-        require(amount != 0, "Lock not found or already unlocked");
-
-		// we can leave gap for now, anyway they (empty locks) will be removed in next _updateUserLocks method
+        require(amount != 0, "Lock not found or already unlocked");		
+        balances[msg.sender] -= amount;
         
-        bal.total -= amount;
-        bal.locked -= amount;
-
 		// AUDIT Finding Id: 6
 		// if we divide not multiple by two amount (3, 23, 123123, 46234672364783...) by 2 then we will have presision error
-		// 23 / 2 = 11
-		// 1 / 2 = 0
-        uint256 penalty = amount / 2;
-        // that's why we subtrat penalty from amount to get leftover
-		// 23 - 11 = 12
-		// 1 - 0 = 1
+		// that's why we subtrat penalty from amount to get leftover
 		// so every such amount withdraw we give user 1 extra wei instead send it to penalty 
 		// but we not lose this 1 wei
-		amount -= penalty;     
+		uint256 penalty = amount / 2;
+        amount -= penalty;     
 
         _sendTokensAndPenalty(amount, penalty);
 
@@ -520,55 +457,20 @@ contract ShadeStaker is ReentrancyGuard, Ownable {
 
     // Update all currently locked tokens where the unlock time has passed
     function _updateUserLocks(address account) internal {
-        LockedBalance[] storage locks = userLocks[account];
+        // changed to memory, since we don't rewrite user locks
+		LockedBalance[] memory locks = userLocks[account];
         
-        uint256 length = locks.length;
+        uint256 locksLength = locks.length;
         // return if user has no locks
-        if (length == 0) return;
-        
-        Balances storage bal = balances[account];        
-        
-        if (locks[length-1].unlockTime > block.timestamp) {
-            // if last lock not expired we iterate through all locks and check if they expired
-            uint256 lockedAmount;    			
-			uint256 lockedCount;
-			// here we creating new emty array to fill it with only not expired locks for future handling
-			// this operation may unnessesary if no expired locks but for now we don't know this
-            LockedBalance[] memory newLocks = new LockedBalance[](length);
-            
-			// AUDIT Finding Id: 4
-			// length can't be more than lockDurationMultiplier (13) + 1
-            for (uint i = 0; i < length; i++) {
-                if (locks[i].unlockTime > block.timestamp) {
-                    // if lock not expired adding amount to total locked
-                    lockedAmount += locks[i].amount;   
-					// now we fill new created above locks array with non expired only locks                 
-                    newLocks[lockedCount] = locks[i];
-					// adn counting them
-                    lockedCount ++;                                        
-                } 				 
-            }
-            
-			// AUDIT Finding Id: 9 
-            // let's get rid of empty locks (gaps) if they present
-            // the reason is to not allow array to grow   	
-			// AUDIT Finding Id: 3	
-			// since we know that maximun possible number of locks can't be more than 14 this code will not over consume gas	
-			// reason for this check is we compare initial lock number with filtered for expired
-			if (lockedCount != length) {
-				// since gaps could be inside array and we don't know where,  we can't shift left 
-                delete userLocks[account];	
-				// AUDIT Finding Id: 4
-				// length can't be more than lockDurationMultiplier (13) + 1			
-				for (uint i = 0; i < lockedCount; i++) {
-                    userLocks[account].push(newLocks[i]);
-                }                
-            } 
-
-            bal.locked = lockedAmount; 
+        if (locksLength == 0) return;
+                
+        if (locks[locksLength-1].unlockTime > block.timestamp) {
+            // searching for expired locks from beginning (startIndex) till first not expired
+			while (locks[startIndex[account]].unlockTime <= block.timestamp) {
+				startIndex[account] ++;
+			}            
         } else {
-            // if last lock expired then user locked = 0 and we delete all locks
-            bal.locked = 0;
+            startIndex[account] = 0;
             delete userLocks[account];
         }
     }
