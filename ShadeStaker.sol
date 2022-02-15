@@ -85,6 +85,7 @@ contract ShadeStaker is ReentrancyGuard, Ownable {
         
         setLockStaker(0xa4873Ff784306A8B6f82cd1123D3b967CaFBdA6A, true);  // LP FARM address
         addRewardToken(address(WETH), 0x380Ff6e45b4606e21B686979060Cad429FB72548);  // Payments FTM contract
+
     }
 
     // -------------------------------- CONFIG -----------------------------------

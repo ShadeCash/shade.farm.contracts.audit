@@ -309,7 +309,7 @@ contract ShadeStaker is ReentrancyGuard, Ownable {
                     unlockTime: unlockTime,
                     id: lockIds
                 }));
-            } else {				
+            } else {								
                 userLocks[account][locksLength-1].amount += amount;
             }
         } 
@@ -386,9 +386,10 @@ contract ShadeStaker is ReentrancyGuard, Ownable {
 
 		uint256 locksLength = locks.length;
 
-		// restriction to withdraw last lock, othrwise will broke stake method and tokens will be lost 
-		require(locksLength > 1, "No locks to withdraw by id"); 
-		require(id != locks[locksLength - 1].id, "Can't withdraw last lock by id");     
+		// restriction to withdraw last lock, othrwise will broke stake method and tokens will be lost. Or maybe I'm wrong
+		//require(locksLength > 1, "No locks to withdraw by id"); 
+		//require(id != locks[locksLength - 1].id, "Can't withdraw last lock by id");    
+		 
 
 		// AUDIT Finding Id: 4
 		// length can't be more than lockDurationMultiplier (14)
