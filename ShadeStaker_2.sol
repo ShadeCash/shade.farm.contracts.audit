@@ -234,7 +234,7 @@ contract ShadeStaker is ReentrancyGuard, Ownable {
 
             LockedBalance[] memory locks = userLocks[account];     			
 			// AUDIT Finding Id: 4
-			// length can't be more than lockDurationMultiplier (14)            
+			// length can't be more than 14            
 			_userLocks = new LockedBalance[](locks.length - startIndex[account]);
 			uint256 idx;
 			for (uint i = startIndex[account]; i < locks.length; i++) {
@@ -382,11 +382,17 @@ contract ShadeStaker is ReentrancyGuard, Ownable {
         _claimReward(msg.sender);
          
         LockedBalance[] storage locks = userLocks[msg.sender];         
-        uint256 amount;     
+        uint256 amount; 
+
+		uint256 locksLength = locks.length;
+
+		// restriction to withdraw last lock, othrwise will broke stake method and tokens will be lost 
+		require(locksLength > 1, "No locks to withdraw by id"); 
+		require(id != locks[locksLength - 1].id, "Can't withdraw last lock by id");     
 
 		// AUDIT Finding Id: 4
 		// length can't be more than lockDurationMultiplier (14)
-        for (uint i = startIndex[msg.sender]; i < locks.length; i++) {
+        for (uint i = startIndex[msg.sender]; i < locksLength; i++) {
             if (locks[i].id == id) {
                 amount = locks[i].amount;
 				delete locks[i];
