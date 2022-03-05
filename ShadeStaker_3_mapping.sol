@@ -225,7 +225,6 @@ contract ShadeStaker is ReentrancyGuard, Ownable {
 		_userLocks = new LockedBalance[](userLocksLength[account] - startIndex[account]);
 		uint256 idx;
 		for (uint256 i = startIndex[account]; i < userLocksLength[account]; i++) {
-			// AUDIT Finding Id: 7
 			if (userLocks[account][i].unlockTime > block.timestamp) {
 				_locked += userLocks[account][i].amount;
 				_userLocks[idx] = userLocks[account][i];
