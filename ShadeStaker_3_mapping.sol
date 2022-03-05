@@ -92,7 +92,7 @@ contract ShadeStaker is ReentrancyGuard, Ownable {
 
 	// Add a new reward token to be distributed to stakers
 	function addRewardToken(address rewardsToken, address distributor) public onlyOwner {
-		require(rewardData[rewardsToken].lastUpdateTime == 0, "Taken already added");
+		require(rewardData[rewardsToken].lastUpdateTime == 0, "Token already added");
 		require(rewardTokens.length < maxRewardsTokens, "Maximun number of reward tokens reached");
 
 		rewardTokens.push(rewardsToken);
@@ -154,7 +154,7 @@ contract ShadeStaker is ReentrancyGuard, Ownable {
 	}
 
 	//
-  function claimRewardForDuration(address rewardsToken) internal view returns (uint256) {
+	function claimRewardForDuration(address rewardsToken) internal view returns (uint256) {
 		return rewardData[rewardsToken].rewardRate * rewardsDuration;
 	}
 
