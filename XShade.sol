@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: MIT
 
-pragma solidity ^0.8.12;
+pragma solidity ^0.8.13;
 
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 
 // ---------------------------------------------------------------------------------------
@@ -23,7 +24,7 @@ import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 //   maxtime (2 years)
 
 contract xShade is ReentrancyGuard, Ownable {
-	using SafeERC20 for IERC20;
+	using SafeERC20 for IERC20Metadata;
 
 	// -------------------------------- VARIABLES -----------------------------------
 	struct Point {
@@ -34,8 +35,7 @@ contract xShade is ReentrancyGuard, Ownable {
 	}
 
 	struct LockedBalance {
-		//int256 amount;
-    uint256 amount;
+		uint256 amount;
 		uint256 end;
 	}
 
@@ -54,14 +54,15 @@ contract xShade is ReentrancyGuard, Ownable {
 	}
 
 	uint256 constant WEEK = 7 days; // all future times are rounded by week
-	uint256 constant MINTIME = WEEK;
+	uint256 constant MINTIME = WEEK * 2; //
 	uint256 constant MAXTIME = WEEK * 104; // 2 years
 	uint256 constant MULTIPLIER = 10**18;
 
-	address public stakingToken;
+	IERC20Metadata public stakingToken;
 
 	mapping(address => LockedBalance) public lockedBalances;
 	uint256 public stakedTotal;
+  LockedBalance private oldLockedStorage;
 
 	//everytime user deposit/withdraw/change_locktime, these values will be updated;
 	uint256 public epoch;
@@ -76,12 +77,14 @@ contract xShade is ReentrancyGuard, Ownable {
 
 	bool public expired = false;
 
+
 	// -------------------------------- CONSTRUCT -----------------------------------
-	constructor() Ownable() {
+  /// @param _stakingToken address of SHADE
+  constructor(IERC20Metadata _stakingToken) Ownable() {
 		name = "xSHADE Token";
 		symbol = "xSHADE";
-		decimals = 18; // MUST be same as for staking tokem
-		stakingToken = 0x3c88baD5dcd1EbF35a0BF9cD1AA341BB387fF73A;
+		stakingToken = _stakingToken; 
+    decimals = _stakingToken.decimals(); 		
 
 		pointHistory[0].blockNumber = block.number;
 		pointHistory[0].timeStamp = block.timestamp;
@@ -96,7 +99,7 @@ contract xShade is ReentrancyGuard, Ownable {
 	//
 	function recoverERC20(address tokenAddress, uint256 amount) external onlyOwner {
 		require(tokenAddress != address(stakingToken), "Cannot withdraw staking token");
-		IERC20(tokenAddress).safeTransfer(owner(), amount);
+		IERC20Metadata(tokenAddress).safeTransfer(owner(), amount);
 		emit Recovered(tokenAddress, amount);
 	}
 
@@ -119,16 +122,12 @@ contract xShade is ReentrancyGuard, Ownable {
 
 	//
 	function balanceOfAtTime(address account, uint256 timeStamp) public view returns (uint256) {
-		if (timeStamp == 0) {
-			timeStamp = block.timestamp;
-		}
-
 		uint256 userEpoch = userPointEpoch[account];
 		if (userEpoch == 0) {
 			return 0;
 		} else {
-			Point memory lastPoint = userPointHistory[account][userEpoch];
-			lastPoint.bias -= lastPoint.slope * int256(timeStamp - lastPoint.timeStamp);
+			Point memory lastPoint = userPointHistory[account][userEpoch];            			
+      lastPoint.bias -= lastPoint.slope * int256(timeStamp - lastPoint.timeStamp);
 			if (lastPoint.bias < 0) {
 				lastPoint.bias = 0;
 			}
@@ -136,7 +135,7 @@ contract xShade is ReentrancyGuard, Ownable {
 		}
 	}
 
-	//
+	/// @notice Because the balance can change within a block, this function should not be used on the current block number
 	function balanceOfAt(address account, uint256 blockNumber) external view returns (uint256) {
 		require(blockNumber <= block.number, "Wrong block number");
 
@@ -185,7 +184,7 @@ contract xShade is ReentrancyGuard, Ownable {
 	}
 
 	//
-	function supplyAt(Point memory point, uint256 timeStamp) internal view returns (uint256) {
+	function _supplyAt(Point memory point, uint256 timeStamp) internal view returns (uint256) {
 		uint256 _timeStamp = point.timeStamp / WEEK * WEEK;
 		for (uint256 i; i < 255; i++) {
 			_timeStamp += WEEK;
@@ -230,12 +229,12 @@ contract xShade is ReentrancyGuard, Ownable {
 			}
 		}
 
-		return supplyAt(point, point.timeStamp + delta);
+		return _supplyAt(point, point.timeStamp + delta);
 	}
 
 	//
 	function totalSupply() public view returns (uint256) {
-		return supplyAt(pointHistory[epoch], block.timestamp);
+		return _supplyAt(pointHistory[epoch], block.timestamp);
 	}
 
 	//
@@ -291,12 +290,12 @@ contract xShade is ReentrancyGuard, Ownable {
 	{
 		_lockedBalance = lockedBalances[account];
 		_balanceXShade = balanceOf(account);
-		_allowance = IERC20(stakingToken).allowance(account, address(this));
-		_balance = IERC20(stakingToken).balanceOf(account);
+		_allowance = stakingToken.allowance(account, address(this));
+		_balance = stakingToken.balanceOf(account);
 	}
 
 	// -------------------------------- MUTATIVE -----------------------------------
-	// Creates a new lock
+	/// Creates a new lock
 	function createLock(uint256 amount, uint256 unlockTime) external nonReentrant notContract notExpired {
 		LockedBalance memory locked = lockedBalances[msg.sender];
 		
@@ -318,7 +317,7 @@ contract xShade is ReentrancyGuard, Ownable {
 		_depositFor(msg.sender, amount, unlockTime, locked, LockAction.CREATE_LOCK);
 	}
 
-	// Increases amount of staked tokens
+	/// Increases amount of staked tokens
 	function increaseLockAmount(uint256 amount) external nonReentrant notContract notExpired {
 		LockedBalance memory locked = lockedBalances[msg.sender];
 
@@ -329,41 +328,42 @@ contract xShade is ReentrancyGuard, Ownable {
 		_depositFor(msg.sender, amount, 0, locked, LockAction.INCREASE_LOCK_AMOUNT);
 	}
 
-	// Increases length of staked tokens unlock time
+	/// Increases length of staked tokens unlock time
 	function increaseLockTime(uint256 unlockTime) external nonReentrant notContract notExpired {
 		LockedBalance memory locked = lockedBalances[msg.sender];
 		
 		require(locked.amount != 0, "No existing lock found");
 		require(locked.end >= block.timestamp, "Lock expired. Withdraw old tokens first");
     
-    uint256 maxUnlockTime = block.timestamp / WEEK * WEEK + MAXTIME;
-    require(locked.end != maxUnlockTime, "Already locked for maximum time");    
+    uint256 roundedMax = block.timestamp / WEEK * WEEK + MAXTIME;
+    require(locked.end != roundedMax, "Already locked for maximum time");    
 
 		unlockTime = unlockTime / WEEK * WEEK; // Locktime is rounded down to weeks
-    require(unlockTime <= maxUnlockTime, "Can't lock for more than max time");
+    require(unlockTime <= roundedMax, "Can't lock for more than max time");
+    require(unlockTime > locked.end, "New unlock time must be higer than current");
    
 		_depositFor(msg.sender, 0, unlockTime, locked, LockAction.INCREASE_LOCK_TIME);
 	}
 
-	// Withdraw all tokens  if the lock has expired
+	/// Withdraw all tokens  if the lock has expired
 	function withdraw() external nonReentrant {
 		LockedBalance storage locked = lockedBalances[msg.sender];
 		LockedBalance memory oldLocked = locked;
     
     require(block.timestamp >= locked.end || expired, "The lock didn't expire");
-		    		
+    		    		
 		stakedTotal -= locked.amount;
     locked.amount = 0;
     locked.end = 0;	
 
 		_checkpoint(msg.sender, oldLocked, locked);
 
-		IERC20(stakingToken).safeTransfer(msg.sender, oldLocked.amount);
+		stakingToken.safeTransfer(msg.sender, oldLocked.amount);
 
 		emit Withdraw(msg.sender, oldLocked.amount, block.timestamp);		
 	}
-
-	// Record global and per-user data to checkpoint
+  
+	/// Record global and per-user data to checkpoint
 	function _checkpoint(
 		address account,
 		LockedBalance memory oldLocked,
@@ -374,8 +374,8 @@ contract xShade is ReentrancyGuard, Ownable {
 		int256 oldSlope = 0;
 		int256 newSlope = 0;
 		uint256 _epoch = epoch;
-
-		if (account != address(0)) {
+    
+    if (account != address(0)) {
 			// Calculate slopes and biases
 			// Kept at zero when they have to
 			if (oldLocked.end > block.timestamp && oldLocked.amount > 0) {
@@ -399,21 +399,24 @@ contract xShade is ReentrancyGuard, Ownable {
 				}
 			}
 		}
+
 		Point memory lastPoint = Point({ bias: 0, slope: 0, timeStamp: block.timestamp, blockNumber: block.number });
 		if (_epoch > 0) {
 			lastPoint = pointHistory[_epoch];
 		}
 		uint256 lastCheckpoint = lastPoint.timeStamp;
-		// initialLastPoint is used for extrapolation to calculate block number
+		
+    // initialLastPoint is used for extrapolation to calculate block number
 		// (approximately, for *At methods) and save them
 		// as we cannot figure that out exactly from inside the contract
-		Point memory initialLastPoint = lastPoint;
-		uint256 blockSlope = 0; // dblock/dt
-		if (block.timestamp > lastPoint.timeStamp) {
-			blockSlope = (MULTIPLIER * (block.number - lastPoint.blockNumber)) / (block.timestamp - lastPoint.timeStamp);
-		}
+		Point memory initialLastPoint = Point({ bias: 0, slope: 0, timeStamp: lastPoint.timeStamp, blockNumber: lastPoint.blockNumber });
+    
 		// If last point is already recorded in this block, slope=0
 		// But that's ok b/c we know the block in such case
+    uint256 blockSlope = 0; // dblock/dt
+		if (block.timestamp > lastPoint.timeStamp) {
+			blockSlope = (MULTIPLIER * (block.number - lastPoint.blockNumber)) / (block.timestamp - lastPoint.timeStamp);
+		}		
 
 		// Go over weeks to fill history and calculate what the current point is
 		uint256 timeStamp = lastCheckpoint / WEEK * WEEK;
@@ -442,7 +445,7 @@ contract xShade is ReentrancyGuard, Ownable {
 			lastCheckpoint = timeStamp;
 			lastPoint.timeStamp = timeStamp;
 			lastPoint.blockNumber = initialLastPoint.blockNumber + ((blockSlope * (timeStamp - initialLastPoint.timeStamp)) / MULTIPLIER);
-
+      
 			_epoch += 1;
 
 			if (timeStamp == block.timestamp) {
@@ -452,10 +455,11 @@ contract xShade is ReentrancyGuard, Ownable {
 				pointHistory[_epoch] = lastPoint;
 			}
 		}
-		epoch = _epoch;
-		// Now pointHistory is filled until timeStamp=now
+    // Now pointHistory is filled until timeStamp=now
+		
+    address accountCopy = account; // To avoid being "Stack Too Deep"
 
-		if (account != address(0)) {
+		if (accountCopy != address(0)) {
 			// If last point was in this block, the slope change has been applied already
 			// But in such case we have 0 slope(s)
 			lastPoint.slope += userNewPoint.slope - userOldPoint.slope;
@@ -466,14 +470,8 @@ contract xShade is ReentrancyGuard, Ownable {
 			if (lastPoint.bias < 0) {
 				lastPoint.bias = 0;
 			}
-		}
-		// Record the changed point into history
-		pointHistory[_epoch] = lastPoint;
-
-		address account2 = account; // To avoid being "Stack Too Deep"
-
-		if (account2 != address(0)) {
-			// Schedule the slope changes (slope is going down)
+		
+      // Schedule the slope changes (slope is going down)
 			// We subtract new_user_slope from [newLocked.end]
 			// and add old_user_slope to [oldLocked.end]
 			if (oldLocked.end > block.timestamp) {
@@ -493,23 +491,26 @@ contract xShade is ReentrancyGuard, Ownable {
 			}
 
 			// Now handle user history
-			uint256 userEpoch = userPointEpoch[account2] + 1;
+			uint256 userEpoch = userPointEpoch[accountCopy] + 1;
 
-			userPointEpoch[account2] = userEpoch;
+			userPointEpoch[accountCopy] = userEpoch;
 			userNewPoint.timeStamp = block.timestamp;
 			userNewPoint.blockNumber = block.number;
-			userPointHistory[account2][userEpoch] = userNewPoint;
-		}
+			userPointHistory[accountCopy][userEpoch] = userNewPoint;
+    }
+		// Record the changed point into history    
+		pointHistory[_epoch] = lastPoint;
+    epoch = _epoch;
 	}
 
-	//
+	/// Record global data to checkpoint
 	function checkpoint() external {
 		LockedBalance memory a;
 		LockedBalance memory b;
 		_checkpoint(address(0), a, b);
 	}
 
-	// Deposits or creates a stake for a given account
+	/// Deposits or creates a stake for a given account
 	function _depositFor(
 		address account,
 		uint256 amount,
@@ -517,12 +518,12 @@ contract xShade is ReentrancyGuard, Ownable {
 		LockedBalance memory locked,
 		LockAction action
 	) internal {
-		LockedBalance memory oldLocked = locked;
+		LockedBalance memory oldLocked = LockedBalance({ amount: locked.amount, end: locked.end });
 		
     if (amount != 0) {
       locked.amount += amount;	
       stakedTotal += amount;            
-			IERC20(stakingToken).safeTransferFrom(account, address(this), amount);
+			stakingToken.safeTransferFrom(account, address(this), amount);
 		}
     
     if (unlockTime != 0) {
@@ -537,12 +538,9 @@ contract xShade is ReentrancyGuard, Ownable {
 	}
 
 	// ------------------------------------ EVENTS --------------------------------------
-	event RewardsDurationUpdated(address token, uint256 newDuration);
-	event RewardAdded(address indexed rewardsToken, uint256 amount);
-	event RewardPaid(address indexed user, address indexed rewardsToken, uint256 amount);
-	event FTMReceived(address distributor, uint256 amount);
 	event Deposit(address indexed accouunt, uint256 value, uint256 indexed locktime, LockAction indexed action, uint256 timestamp);
 	event Withdraw(address indexed accouunt, uint256 value, uint256 timestamp);	
+  event WithdrawEmergency(address indexed accouunt, uint256 value, uint256 timestamp);	
 	event Expired();
 	event Recovered(address token, uint256 amount);
 

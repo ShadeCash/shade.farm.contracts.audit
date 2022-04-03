@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.11;
+pragma solidity ^0.8.13;
 
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -14,10 +14,6 @@ library Math {
 
 // ------------------------------------- SignedMath -------------------------------------------
 library SignedMath {
-	function min(int256 a, int256 b) internal pure returns (int256) {
-		return a < b ? a : b;
-	}
-
 	function max(int256 a, int256 b) internal pure returns (int256) {
 		return a >= b ? a : b;
 	}
@@ -53,7 +49,8 @@ contract xShadeRewardsDistributor is ReentrancyGuard, Ownable {
 
 	// -------------------------------- VARIABLES -----------------------------------
 	IXSHADE public immutable xShadeToken;
-	address public immutable rewardToken;
+	IERC20 public immutable rewardToken;
+	bool private immutable isRewardsFTM; // if true reward token MUST be Wrapped FTM
 
 	uint256 constant WEEK = 7 days;
 	uint256 constant TOKEN_CHECKPOINT_DEADLINE = 1 days;
@@ -71,18 +68,22 @@ contract xShadeRewardsDistributor is ReentrancyGuard, Ownable {
 	mapping(uint256 => uint256) public xShadeSupply; // total supply at week bounds
 
 	bool public allowCheckpointToken = false;
-	bool private immutable isRewardsFTM;
 	bool public expired = false;
 
 	// -------------------------------- CONSTRUCT -----------------------------------
-	constructor() Ownable() {
-		xShadeToken = IXSHADE(0xE870920B89373503D295785227062301748942A2);
-		isRewardsFTM = true; // if true reward token MUST be Wrapped FTM
-		rewardToken = 0x15c34D8b356F21112C07cA1811D84101F480a3F1;
-		//isRewardsFTM = false;
-		//rewardToken = 0xE870920B89373503D295785227062301748942A2;
+  /// @param _xShadeToken address of xSHADE
+  /// @param _rewardToken address of rewad token
+  /// @param _isRewardsFTM if reward token is wraped token of chain it MUST be set to true otherwise false
+  constructor(
+		IXSHADE _xShadeToken,
+		IERC20 _rewardToken,
+		bool _isRewardsFTM
+	) Ownable() {
+		xShadeToken = _xShadeToken;
+		rewardToken = _rewardToken;
+		isRewardsFTM = _isRewardsFTM;
 
-		startTime = block.timestamp / WEEK * WEEK;
+		startTime = (block.timestamp / WEEK) * WEEK;
 		lastRewardsTime = startTime;
 		timeCursor = startTime;
 	}
@@ -97,7 +98,9 @@ contract xShadeRewardsDistributor is ReentrancyGuard, Ownable {
 
 	//
 	function recoverERC20(address tokenAddress, uint256 amount) external onlyOwner {
-		require(expired, "Cannot withdraw while not expired");
+		if (tokenAddress == address(rewardToken)) {
+			require(expired, "Cannot withdraw while not expired");
+		}
 		IERC20(tokenAddress).safeTransfer(owner(), amount);
 		emit Recovered(tokenAddress, amount);
 	}
@@ -170,32 +173,32 @@ contract xShadeRewardsDistributor is ReentrancyGuard, Ownable {
 	// -------------------------------- MUTATIVE -----------------------------------
 	//
 	function _checkpointToken() internal {
-		uint256 rewardTokenBalance = IERC20(rewardToken).balanceOf(address(this));
+		uint256 rewardTokenBalance = rewardToken.balanceOf(address(this));
 		uint256 rewardsToDistribute = rewardTokenBalance - rewardTokenLastBalance;
 
 		rewardTokenLastBalance = rewardTokenBalance;
 
-		uint256 _lastRewardsTime = lastRewardsTime;
-		uint256 sinceLast = block.timestamp - _lastRewardsTime;
+		uint256 _lastRewardsTime = lastRewardsTime; // 0
+		uint256 sinceLast = block.timestamp - _lastRewardsTime; // 104
 		lastRewardsTime = block.timestamp;
 
-		uint256 thisWeek = _lastRewardsTime / WEEK * WEEK;
-		uint256 nextWeek;
+		uint256 thisWeek = (_lastRewardsTime / WEEK) * WEEK; // 0
+		uint256 nextWeek; // 0
 
-		for (uint256 i = 0; i < 20; i++) {
+		for (uint256 i = 0; i < 104; i++) {
 			nextWeek = thisWeek + WEEK;
 			if (block.timestamp < nextWeek) {
-				if (sinceLast == 0 && block.timestamp == _lastRewardsTime) {
+				if (sinceLast == 0) {
 					rewardsPerWeek[thisWeek] += rewardsToDistribute;
 				} else {
-					rewardsPerWeek[thisWeek] += rewardsToDistribute * (block.timestamp - _lastRewardsTime) / sinceLast;
+					rewardsPerWeek[thisWeek] += (rewardsToDistribute * (block.timestamp - _lastRewardsTime)) / sinceLast;
 				}
 				break;
 			} else {
-				if (sinceLast == 0 && nextWeek == _lastRewardsTime) {
+				if (sinceLast == 0) {
 					rewardsPerWeek[thisWeek] += rewardsToDistribute;
 				} else {
-					rewardsPerWeek[thisWeek] += rewardsToDistribute * (nextWeek - _lastRewardsTime) / sinceLast;
+					rewardsPerWeek[thisWeek] += (rewardsToDistribute * (nextWeek - _lastRewardsTime)) / sinceLast;
 				}
 			}
 			_lastRewardsTime = nextWeek;
@@ -205,13 +208,11 @@ contract xShadeRewardsDistributor is ReentrancyGuard, Ownable {
 		emit CheckpointToken(block.timestamp, rewardsToDistribute);
 	}
 
-	//
+	/// @notice Update the reward Token checkpoint
+  /// @dev Calculates the total number of tokens to be distributed in a given week.
+  ///   During setup for the initial distribution this function is only callable
+  ///   by the contract owner. Beyond initial, it can be enabled for anyone to call.
 	function checkpointToken() external {
-		// Update the reward Token checkpoint
-		// Calculates the total number of tokens to be distributed in a given week.
-		// During setup for the initial distribution this function is only callable
-		// by the contract owner. Beyond initial distro, it can be enabled for anyone
-		// to call.
 		require(msg.sender == owner() || (allowCheckpointToken && (block.timestamp > lastRewardsTime + TOKEN_CHECKPOINT_DEADLINE)));
 		_checkpointToken();
 	}
@@ -219,11 +220,11 @@ contract xShadeRewardsDistributor is ReentrancyGuard, Ownable {
 	//
 	function _checkpointTotalSupply() internal {
 		uint256 _timeCursor = timeCursor;
-		uint256 roundedTimestamp = block.timestamp / WEEK * WEEK;
+		uint256 roundedTimestamp = (block.timestamp / WEEK) * WEEK;
 
 		xShadeToken.checkpoint();
 
-		for (uint256 i = 0; i < 20; i++) {
+		for (uint256 i = 0; i < 104; i++) {
 			if (_timeCursor >= roundedTimestamp) {
 				break;
 			} else {
@@ -240,7 +241,10 @@ contract xShadeRewardsDistributor is ReentrancyGuard, Ownable {
 		timeCursor = _timeCursor;
 	}
 
-	//
+	/// @notice Update the veCRV total supply checkpoint
+  /// @dev The checkpoint is also updated by the first claimant each
+  ///   new epoch week. This function may be called independently
+  ///   of a claim, to reduce claiming gas costs.
 	function checkpointTotalSupply() external {
 		_checkpointTotalSupply();
 	}
@@ -271,7 +275,7 @@ contract xShadeRewardsDistributor is ReentrancyGuard, Ownable {
 		Point memory userPoint = xShadeToken.userPointHistory(addr, userEpoch);
 
 		if (weekCursor == 0) {
-			weekCursor = (userPoint.timeStamp + WEEK - 1) / WEEK * WEEK;
+			weekCursor = ((userPoint.timeStamp + WEEK - 1) / WEEK) * WEEK;
 		}
 		if (weekCursor >= _lastRewardsTime) {
 			return 0;
@@ -301,7 +305,7 @@ contract xShadeRewardsDistributor is ReentrancyGuard, Ownable {
 				}
 				if (balanceOf > 0) {
 					if (xShadeSupply[weekCursor] != 0) {
-						rewardsToDistribute += balanceOf * rewardsPerWeek[weekCursor] / xShadeSupply[weekCursor];
+						rewardsToDistribute += (balanceOf * rewardsPerWeek[weekCursor]) / xShadeSupply[weekCursor];
 					}
 				}
 				weekCursor += WEEK;
@@ -320,6 +324,13 @@ contract xShadeRewardsDistributor is ReentrancyGuard, Ownable {
 		return claim(msg.sender);
 	}
 
+  /// @notice Claim fees for addr
+  /// @dev Each call to claim look at a maximum of 50 user points. For accounts with many veCRV related actions, 
+  ///   this function may need to be called more than once to claim all available
+  ///   fees. In the `Claimed` event that fires, if `claim_epoch` is
+  ///   less than `max_epoch`, the account may claim again.
+  /// @param addr Address to claim fees for
+  /// @return uint256 Amount of fees claimed in the call
 	function claim(address addr) public nonReentrant returns (uint256) {
 		if (block.timestamp >= timeCursor) {
 			_checkpointTotalSupply();
@@ -331,20 +342,22 @@ contract xShadeRewardsDistributor is ReentrancyGuard, Ownable {
 			_lastRewardsTime = block.timestamp;
 		}
 
-		_lastRewardsTime = _lastRewardsTime / WEEK * WEEK;
+		_lastRewardsTime = (_lastRewardsTime / WEEK) * WEEK;
 
 		uint256 amount = _claim(addr, _lastRewardsTime);
 
 		if (amount != 0) {
-			IERC20(rewardToken).transfer(addr, amount);
+			rewardToken.safeTransfer(addr, amount);
 			rewardTokenLastBalance -= amount;
 		}
 
 		return amount;
 	}
-
-	//
-	function claimMany(address[20] memory accounts) external nonReentrant returns (bool) {
+	
+  /// @notice Make multiple fee claims in a single call
+  /// @dev Used to claim for many accounts at once, or to make multiple claims for the same address when that address has significant history
+  /// @param accounts List of addresses to claim for. Claiming terminates at the first 0 address.
+  function claimMany(address[20] memory accounts) external nonReentrant returns (bool) {
 		if (block.timestamp >= timeCursor) {
 			_checkpointTotalSupply();
 		}
@@ -355,7 +368,7 @@ contract xShadeRewardsDistributor is ReentrancyGuard, Ownable {
 			_lastRewardsTime = block.timestamp;
 		}
 
-		_lastRewardsTime = _lastRewardsTime / WEEK * WEEK;
+		_lastRewardsTime = (_lastRewardsTime / WEEK) * WEEK;
 
 		uint256 total;
 
@@ -365,7 +378,7 @@ contract xShadeRewardsDistributor is ReentrancyGuard, Ownable {
 			}
 			uint256 amount = _claim(msg.sender, _lastRewardsTime);
 			if (amount != 0) {
-				IERC20(rewardToken).transfer(msg.sender, amount);
+				rewardToken.safeTransfer(msg.sender, amount);
 				total += amount;
 			}
 		}
@@ -382,11 +395,11 @@ contract xShadeRewardsDistributor is ReentrancyGuard, Ownable {
 		if (isRewardsFTM) {
 			require(msg.value != 0, "No reward");
 			amount = msg.value;
-			IWETH(rewardToken).deposit{ value: amount }();
+			IWETH(address(rewardToken)).deposit{ value: amount }();
 		} else {
 			require(msg.value == 0, "Can't receive FTM");
 			require(amount != 0, "No reward");
-			IERC20(rewardToken).safeTransferFrom(msg.sender, address(this), amount);
+			rewardToken.safeTransferFrom(msg.sender, address(this), amount);
 		}
 
 		if (allowCheckpointToken && (block.timestamp > lastRewardsTime + TOKEN_CHECKPOINT_DEADLINE)) {
