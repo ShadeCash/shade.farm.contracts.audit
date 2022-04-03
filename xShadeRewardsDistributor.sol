@@ -71,10 +71,10 @@ contract xShadeRewardsDistributor is ReentrancyGuard, Ownable {
 	bool public expired = false;
 
 	// -------------------------------- CONSTRUCT -----------------------------------
-  /// @param _xShadeToken address of xSHADE
-  /// @param _rewardToken address of rewad token
-  /// @param _isRewardsFTM if reward token is wraped token of chain it MUST be set to true otherwise false
-  constructor(
+	/// @param _xShadeToken address of xSHADE
+	/// @param _rewardToken address of rewad token
+	/// @param _isRewardsFTM if reward token is wraped token of chain it MUST be set to true otherwise false
+	constructor(
 		IXSHADE _xShadeToken,
 		IERC20 _rewardToken,
 		bool _isRewardsFTM
@@ -209,9 +209,9 @@ contract xShadeRewardsDistributor is ReentrancyGuard, Ownable {
 	}
 
 	/// @notice Update the reward Token checkpoint
-  /// @dev Calculates the total number of tokens to be distributed in a given week.
-  ///   During setup for the initial distribution this function is only callable
-  ///   by the contract owner. Beyond initial, it can be enabled for anyone to call.
+	/// @dev Calculates the total number of tokens to be distributed in a given week.
+	///   During setup for the initial distribution this function is only callable
+	///   by the contract owner. Beyond initial, it can be enabled for anyone to call.
 	function checkpointToken() external {
 		require(msg.sender == owner() || (allowCheckpointToken && (block.timestamp > lastRewardsTime + TOKEN_CHECKPOINT_DEADLINE)));
 		_checkpointToken();
@@ -242,9 +242,9 @@ contract xShadeRewardsDistributor is ReentrancyGuard, Ownable {
 	}
 
 	/// @notice Update the veCRV total supply checkpoint
-  /// @dev The checkpoint is also updated by the first claimant each
-  ///   new epoch week. This function may be called independently
-  ///   of a claim, to reduce claiming gas costs.
+	/// @dev The checkpoint is also updated by the first claimant each
+	///   new epoch week. This function may be called independently
+	///   of a claim, to reduce claiming gas costs.
 	function checkpointTotalSupply() external {
 		_checkpointTotalSupply();
 	}
@@ -324,13 +324,13 @@ contract xShadeRewardsDistributor is ReentrancyGuard, Ownable {
 		return claim(msg.sender);
 	}
 
-  /// @notice Claim fees for addr
-  /// @dev Each call to claim look at a maximum of 50 user points. For accounts with many veCRV related actions, 
-  ///   this function may need to be called more than once to claim all available
-  ///   fees. In the `Claimed` event that fires, if `claim_epoch` is
-  ///   less than `max_epoch`, the account may claim again.
-  /// @param addr Address to claim fees for
-  /// @return uint256 Amount of fees claimed in the call
+	/// @notice Claim fees for addr
+	/// @dev Each call to claim look at a maximum of 50 user points. For accounts with many veCRV related actions,
+	///   this function may need to be called more than once to claim all available
+	///   fees. In the `Claimed` event that fires, if `claim_epoch` is
+	///   less than `max_epoch`, the account may claim again.
+	/// @param addr Address to claim fees for
+	/// @return uint256 Amount of fees claimed in the call
 	function claim(address addr) public nonReentrant returns (uint256) {
 		if (block.timestamp >= timeCursor) {
 			_checkpointTotalSupply();
@@ -353,11 +353,11 @@ contract xShadeRewardsDistributor is ReentrancyGuard, Ownable {
 
 		return amount;
 	}
-	
-  /// @notice Make multiple fee claims in a single call
-  /// @dev Used to claim for many accounts at once, or to make multiple claims for the same address when that address has significant history
-  /// @param accounts List of addresses to claim for. Claiming terminates at the first 0 address.
-  function claimMany(address[20] memory accounts) external nonReentrant returns (bool) {
+
+	/// @notice Make multiple fee claims in a single call
+	/// @dev Used to claim for many accounts at once, or to make multiple claims for the same address when that address has significant history
+	/// @param accounts List of addresses to claim for. Claiming terminates at the first 0 address.
+	function claimMany(address[20] memory accounts) external nonReentrant returns (bool) {
 		if (block.timestamp >= timeCursor) {
 			_checkpointTotalSupply();
 		}
